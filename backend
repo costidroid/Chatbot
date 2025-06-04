@@ -1,1 +1,113 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import PyPDF2
+import requests
+import os
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # Permite cereri cross-origin
+
+# Configurare OpenRouter API
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+MODEL = "deepseek/deepseek-r1:free"
+
+# Inițializare model pentru embedding
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Stocare temporară pentru documente și embedding-uri
+documents = []
+embeddings = []
+
+# Funcție pentru extragerea textului din PDF
+def extract_text_from_pdf(pdf_file):
+    try:
+        reader = PyPDF2.PdfReader(pdf_file)
+        text = ''
+        for page in reader.pages:
+            text += page.extract_text() or ''
+        return text
+    except Exception as e:
+        return f"Eroare la procesarea PDF: {str(e)}"
+
+# Funcție pentru apelarea OpenRouter API
+def call_openrouter(prompt):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://your-github-pages-url",  # Înlocuiește cu URL-ul GitHub Pages
+        "X-Title": "PDF Chatbot"
+    }
+    data = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": "Ești un asistent AI care răspunde bazându-se pe conținutul furnizat."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 500,
+        "temperature": 0.7
+    }
+    try:
+        response = requests.post(OPENROUTER_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except requests.exceptions.RequestException as e:
+        return f"Eroare API: {str(e)}"
+
+# Ruta pentru antrenarea/indexarea PDF-urilor
+@app.route('/train', methods=['POST'])
+def train():
+    if 'file' not in request.files:
+        return jsonify({'error': 'Niciun fișier PDF încărcat'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'Nume fișier invalid'}), 400
+    
+    if file and file.filename.endswith('.pdf'):
+        # Extrage textul direct din fișierul încărcat
+        text = extract_text_from_pdf(file)
+        if text.startswith('Eroare'):
+            return jsonify({'error': text}), 500
+        
+        # Creează embedding pentru text
+        doc_embedding = embedder.encode([text])[0]
+        documents.append(text)
+        embeddings.append(doc_embedding)
+        
+        return jsonify({'message': 'PDF procesat și antrenat cu succes'}), 200
+    
+    return jsonify({'error': 'Fișierul trebuie să fie PDF'}), 400
+
+# Funcție pentru găsirea celui mai relevant document
+def find_relevant_document(query):
+    query_embedding = embedder.encode([query])[0]
+    similarities = [np.dot(query_embedding, doc_emb) / (np.linalg.norm(query_embedding) * np.linalg.norm(doc_emb)) for doc_emb in embeddings]
+    if not similarities:
+        return None
+    max_idx = np.argmax(similarities)
+    return documents[max_idx]
+
+# Ruta pentru interacțiunea cu chatbotul
+@app.route('/chat', methods=['POST'])
+def chat():
+    data = request.get_json()
+    query = data.get('query', '')
+    if not query:
+        return jsonify({'error': 'Nicio întrebare furnizată'}), 400
+    
+    # Găsește documentul relevant
+    relevant_doc = find_relevant_document(query)
+    if not relevant_doc:
+        return jsonify({'response': 'Nu există date antrenate. Încarcă un PDF mai întâi.'}), 200
+    
+    # Generează răspuns folosind OpenRouter
+    prompt = f"Întrebare: {query}\nContext: {relevant_doc[:1000]}...\nRăspuns:"
+    response = call_openrouter(prompt)
+    
+    return jsonify({'response': response}), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
