@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot PDF cu DeepSeek</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        #chat-container {
+            border: 1px solid #ccc;
+            padding: 15px;
+            height: 400px;
+            overflow-y: scroll;
+            background-color: white;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .user { background-color: #e3f2fd; color: #0d47a1; }
+        .bot { background-color: #e8f5e9; color: #1b5e20; }
+        #chat-input {
+            width: 70%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        #send-btn, #train-btn {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #0288d1;
+            color: white;
+        }
+        #train-btn { background-color: #43a047; }
+    </style>
+</head>
+<body>
+    <h1>Chatbot PDF cu DeepSeek</h1>
+    <div>
+        <input type="file" id="pdf-upload" accept=".pdf">
+        <button id="train-btn"><i class="fas fa-upload"></i> Încarcă PDF</button>
+    </div>
+    <div id="chat-container"></div>
+    <input type="text" id="chat-input" placeholder="Întreabă ceva...">
+    <button id="send-btn"><i class="fas fa-paper-plane"></i> Trimite</button>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.2/marked.min.js"></script>
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const trainBtn = document.getElementById('train-btn');
+        const pdfUpload = document.getElementById('pdf-upload');
+        const backendUrl = 'https://your-render-url'; // Înlocuiește cu URL-ul de la Render
+
+        // Funcție pentru afișarea mesajelor în chat
+        function addMessage(message, isUser = false) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            msgDiv.innerHTML = isUser ? `<strong>Tu:</strong> ${message}` : `<strong>Bot:</strong> ${marked.parse(message)}`;
+            chatContainer.appendChild(msgDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Încărcare și antrenare PDF
+        trainBtn.addEventListener('click', async () => {
+            const file = pdfUpload.files[0];
+            if (!file) {
+                alert('Selectează un fișier PDF!');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${backendUrl}/train`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                alert(result.message || result.error);
+            } catch (error) {
+                alert('Eroare la încărcare: ' + error.message);
+            }
+        });
+
+        // Trimiterea întrebărilor
+        sendBtn.addEventListener('click', async () => {
+            const query = chatInput.value.trim();
+            if (!query) return;
+
+            addMessage(query, true);
+            chatInput.value = '';
+
+            try {
+                const response = await fetch(`${backendUrl}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+                const result = await response.json();
+                addMessage(result.response || result.error);
+            } catch (error) {
+                addMessage('Eroare: ' + error.message);
+            }
+        });
+
+        // Permite trimiterea cu Enter
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendBtn.click();
+        });
+    </script>
+</body>
+</html>
